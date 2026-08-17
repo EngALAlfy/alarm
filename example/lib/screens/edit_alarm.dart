@@ -1,4 +1,5 @@
 import 'package:alarm/alarm.dart';
+import 'package:alarm/utils/alarm_exception.dart';
 import 'package:flutter/material.dart';
 
 class ExampleAlarmEditScreen extends StatefulWidget {
@@ -120,10 +121,14 @@ class _ExampleAlarmEditScreenState extends State<ExampleAlarmEditScreen> {
       assetAudioPath: assetAudio,
       volumeSettings: volumeSettings,
       allowAlarmOverlap: true,
+      // Android only. Needs the matching androidSnoozeButton label below to
+      // show up, and must be at least AlarmSettings.minSnoozeDuration.
+      androidSnoozeDuration: const Duration(minutes: 1),
       notificationSettings: NotificationSettings(
         title: 'Alarm example',
         body: 'Your alarm ($id) is ringing',
         stopButton: 'Stop the alarm',
+        androidSnoozeButton: 'Snooze',
         icon: 'notification_icon',
         keepNotificationAfterAlarmEnds: true,
       ),
@@ -131,19 +136,26 @@ class _ExampleAlarmEditScreenState extends State<ExampleAlarmEditScreen> {
     return alarmSettings;
   }
 
-  void saveAlarm() {
+  Future<void> saveAlarm() async {
     if (loading) return;
     setState(() => loading = true);
-    Alarm.set(alarmSettings: buildAlarmSettings()).then((res) {
+    try {
+      final res = await Alarm.set(alarmSettings: buildAlarmSettings());
       if (res && mounted) Navigator.pop(context, true);
-      setState(() => loading = false);
-    });
+    } on AlarmException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to set alarm: ${e.message}')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
   }
 
-  void deleteAlarm() {
-    Alarm.stop(widget.alarmSettings!.id).then((res) {
-      if (res && mounted) Navigator.pop(context, true);
-    });
+  Future<void> deleteAlarm() async {
+    final res = await Alarm.stop(widget.alarmSettings!.id);
+    if (res && mounted) Navigator.pop(context, true);
   }
 
   @override

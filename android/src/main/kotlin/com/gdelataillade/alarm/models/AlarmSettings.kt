@@ -27,9 +27,27 @@ data class AlarmSettings(
     val warningNotificationOnKill: Boolean,
     val androidFullScreenIntent: Boolean,
     val allowAlarmOverlap: Boolean = false, // Defaults to false for backward compatibility
+    val allowSameSecondScheduling: Boolean = false, // Defaults to false for backward compatibility
     val androidStopAlarmOnTermination: Boolean = true, // Defaults to true for backward compatibility
+    val preferConnectedAudioDevice: Boolean = false, // Defaults to false for backward compatibility
+    // Null, or below SNOOZE_MINIMUM_MILLIS, offers no snooze.
+    val androidSnoozeDurationMillis: Long? = null,
 ) {
+    /** Whether this alarm can be deferred rather than only stopped. */
+    val canSnooze: Boolean
+        get() = (androidSnoozeDurationMillis ?: 0L) >= SNOOZE_MINIMUM_MILLIS
+
     companion object {
+        /**
+         * Shortest snooze the platform accepts.
+         *
+         * Kept above the delay below which scheduling falls back to a plain
+         * `Handler.postDelayed` instead of `AlarmManager`: that fallback
+         * survives neither process death nor cancellation, so a snooze shorter
+         * than this could not be honoured or undone.
+         */
+        const val SNOOZE_MINIMUM_MILLIS = 60_000L
+
         fun fromWire(e: AlarmSettingsWire): AlarmSettings {
             return AlarmSettings(
                 e.id.toInt(),
@@ -42,7 +60,10 @@ data class AlarmSettings(
                 e.warningNotificationOnKill,
                 e.androidFullScreenIntent,
                 e.allowAlarmOverlap,
+                e.allowSameSecondScheduling,
                 e.androidStopAlarmOnTermination,
+                e.preferConnectedAudioDevice,
+                e.androidSnoozeDurationMillis,
             )
         }
 
@@ -68,8 +89,18 @@ data class AlarmSettings(
             // Handle backward compatibility for `allowAlarmOverlap`
             val allowAlarmOverlap = jsonObject.primitiveBoolean("allowAlarmOverlap") ?: false
 
+            // Handle backward compatibility for `allowSameSecondScheduling`
+            val allowSameSecondScheduling = jsonObject.primitiveBoolean("allowSameSecondScheduling") ?: false
+
             // Handle backward compatibility for `androidStopAlarmOnTermination`
             val androidStopAlarmOnTermination = jsonObject.primitiveBoolean("androidStopAlarmOnTermination") ?: true
+
+            // Handle backward compatibility for `preferConnectedAudioDevice`
+            val preferConnectedAudioDevice = jsonObject.primitiveBoolean("preferConnectedAudioDevice") ?: false
+
+            // Absent in alarms saved before snooze existed, which simply means
+            // the alarm can only be stopped.
+            val androidSnoozeDurationMillis = jsonObject.primitiveLong("androidSnoozeDurationMillis")
 
             // Handle backward compatibility for `volumeSettings`
             val volumeSettings = jsonObject["volumeSettings"]?.let {
@@ -84,7 +115,8 @@ data class AlarmSettings(
                     volume = volume,
                     fadeDuration = fadeDuration?.toKotlinDuration(),
                     fadeSteps = emptyList(), // No equivalent for older models
-                    volumeEnforced = volumeEnforced
+                    volumeEnforced = volumeEnforced,
+                    showSystemUI = true
                 )
             }
 
@@ -99,7 +131,10 @@ data class AlarmSettings(
                 warningNotificationOnKill = warningNotificationOnKill,
                 androidFullScreenIntent = androidFullScreenIntent,
                 allowAlarmOverlap = allowAlarmOverlap,
+                allowSameSecondScheduling = allowSameSecondScheduling,
                 androidStopAlarmOnTermination = androidStopAlarmOnTermination,
+                preferConnectedAudioDevice = preferConnectedAudioDevice,
+                androidSnoozeDurationMillis = androidSnoozeDurationMillis,
             )
         }
     }

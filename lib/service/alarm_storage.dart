@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:alarm/model/alarm_settings.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_fgbg/flutter_fgbg.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -26,27 +27,29 @@ class AlarmStorage {
   static late SharedPreferences _prefs;
 
   /// Stream subscription to listen to foreground/background events.
-  static late StreamSubscription<FGBGType> _fgbgSubscription;
+  static StreamSubscription<FGBGType>? _fgbgSubscription;
 
-  static bool _initialized = false;
+  /// Guards against concurrent/double initialization and lets other methods
+  /// await readiness without polling.
+  static Future<void>? _initFuture;
 
   /// Initializes shared preferences instance.
-  static Future<void> init() async {
+  ///
+  /// Safe to call multiple times: initialization only runs once.
+  static Future<void> init() => _initFuture ??= _init();
+
+  static Future<void> _init() async {
     _prefs = await SharedPreferences.getInstance();
 
     /// Reloads the shared preferences instance in the case modifications
     /// were made in the native code, after a notification action.
     _fgbgSubscription =
         FGBGEvents.instance.stream.listen((event) => _prefs.reload());
-
-    _initialized = true;
   }
 
-  static Future<void> _waitUntilInitialized() async {
-    while (!_initialized) {
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-    }
-  }
+  /// Waits for initialization to complete, starting it if needed so callers
+  /// never hang when [init] was not called first.
+  static Future<void> _waitUntilInitialized() => init();
 
   /// Saves alarm info in local storage so we can restore it later
   /// in the case app is terminated.
@@ -111,6 +114,19 @@ class AlarmStorage {
 
   /// Dispose the fgbg subscription to avoid memory leaks.
   static void dispose() {
-    _fgbgSubscription.cancel();
+    _fgbgSubscription?.cancel();
+    _fgbgSubscription = null;
+  }
+
+  /// Forgets the initialized preferences so the next [init] runs again.
+  ///
+  /// Only for tests: `SharedPreferences.setMockInitialValues` swaps the
+  /// platform store, but this class holds a `SharedPreferences` instance with
+  /// its own populated cache, so without this a mocked store from one test is
+  /// invisible and the previous test's alarms leak into the next.
+  @visibleForTesting
+  static void resetForTesting() {
+    dispose();
+    _initFuture = null;
   }
 }

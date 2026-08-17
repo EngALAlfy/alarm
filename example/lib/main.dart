@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:alarm/alarm.dart';
 import 'package:alarm_example/screens/home.dart';
 import 'package:alarm_example/utils/logging.dart';

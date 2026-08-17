@@ -1,3 +1,49 @@
+## 5.10.0
+* [Android] Fixed an alarm due within ~45s of a reboot never ringing (#424).
+* Added `Alarm.events`, reporting deferrals and discards the host made on its own.
+* **`Alarm.snoozed` is now buffered**, so listeners subscribing after `Alarm.init()` still get replayed deferrals.
+
+## 5.9.0
+* [Android] Fixed `Alarm.init()` cancelling an alarm that was due but had not started ringing yet, which silently lost the alarm. Past-due alarms are now left alone for 30 seconds before being stopped.
+* [Android] A failed alarm arm is now reported to Flutter as an error instead of success, and no longer leaves an alarm stored that the platform never armed. **`Alarm.set()` now throws `AlarmException` where it previously returned `true`.** A failed re-arm after a reboot keeps the alarm stored instead, so a later `Alarm.init()` can retry it.
+* [Android] `NotificationSettings.androidStopAlarmOnDismiss: false` now re-posts the notification while the alarm is still ringing, instead of letting the swipe remove the only on-screen control over a sounding alarm.
+
+## 5.8.0
+* [Android] Added `NotificationSettings.androidStopAlarmOnDismiss` to control whether swiping the notification away also stops the alarm. Enabled by default, matching the behavior added in 5.0.3.
+
+## 5.7.1
+* [Android] Fixed the lock screen asking for authentication before the alarm could be stopped: the keyguard is now only dismissed on devices without a PIN, pattern or password.
+
+## 5.7.0
+* [Android] Added a snooze action to the alarm notification, via `AlarmSettings.androidSnoozeDuration` and `NotificationSettings.androidSnoozeButton`. Snoozing defers the alarm rather than stopping it, and is reported on the new `Alarm.snoozed` stream as well as through `Alarm.scheduled`. A snooze taken with no Flutter engine running is applied on the next `Alarm.init()`.
+* [Android] Alarms can now be presented on the app's own activity by declaring an intent filter for `com.gdelataillade.alarm.action.RING`, instead of always opening the launcher activity.
+* Fixed `build_runner` being unable to regenerate `lib/model/*.g.dart`, which also removes the only `dart format` violation in the package.
+
+## 5.6.0
+* [Android] Added support for Android Gradle Plugin 9, while keeping AGP 8 compatibility.
+* [Android] Fixed several alarm scheduling, foreground service, and audio playback crashes.
+* [Android] Stop actions now dismiss the alarm notification when the alarm service is not running.
+* [iOS] Fixed alarm timing precision, volume fades, and background refresh scheduling.
+* [iOS] Migrated the example app from CocoaPods to Swift Package Manager.
+* Fixed `AlarmSettings.copyWith` not clearing `payload`, and a debug-mode assert in `NotificationSettings.copyWith`; deprecated legacy `copyWith` parameters that were silently ignored.
+* Fixed the v4 → v5 migration misparsing `fadeDuration`.
+* Added a Dart unit test suite, now run in CI.
+
+## 5.5.0
+* [iOS] Added Swift Package Manager support.
+* Added `AlarmSettings.allowSameSecondScheduling` to allow multiple alarms to ring in the same second.
+* **Requires Flutter 3.41.0 or later.** Older Flutter projects will continue to resolve to 5.4.1.
+
+## 5.4.1
+* [Android] Added `AlarmSettings.preferConnectedAudioDevice` to route alarm audio through connected earphones or Bluetooth.
+* [Android] Fixed `androidStopAlarmOnTermination` not persisting across app restarts.
+
+## 5.4.0
+* [Android] Added `VolumeSettings.showSystemUI` to suppress the system volume bar when the alarm sets or restores volume.
+
+## 5.3.0
+* [Android] Route alarm audio through the alarm volume stream so it responds to the alarm slider instead of media volume.
+
 ## 5.2.1
 * [iOS] Added `NotificationSettings.keepNotificationAfterAlarmEnds` to control whether the notification should stay after alarm ends or not.
 

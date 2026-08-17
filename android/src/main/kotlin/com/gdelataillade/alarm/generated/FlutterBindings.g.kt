@@ -105,6 +105,53 @@ enum class AlarmErrorCode(val raw: Int) {
   }
 }
 
+/**
+ * What the host did to an alarm without the application asking.
+ *
+ * Dart's handling depends only on this: [moved] rewrites the stored time,
+ * [dropped] removes the alarm. The [AlarmEventCauseWire] is for the app.
+ */
+enum class AlarmEventVerbWire(val raw: Int) {
+  /** The alarm is still owed and is now registered for a different time. */
+  MOVED(0),
+  /** The alarm is gone and will not ring. */
+  DROPPED(1);
+
+  companion object {
+    fun ofRaw(raw: Int): AlarmEventVerbWire? {
+      return values().firstOrNull { it.raw == raw }
+    }
+  }
+}
+
+/** Why the host changed an alarm. */
+enum class AlarmEventCauseWire(val raw: Int) {
+  /** The user deferred the alarm from the notification or the ring screen. */
+  SNOOZE(0),
+  /**
+   * The platform refused to let the ring start.
+   *
+   * Android forbids starting a `mediaPlayback` foreground service from
+   * `BOOT_COMPLETED`, and the refusal follows the attribution rather than the
+   * caller, so an ordinary alarm delivered inside the boot window is refused
+   * too. The alarm is normally re-armed just past that window, because ringing
+   * late beats not ringing; it is only dropped when the retry is refused as
+   * well, which means the boot window was not the cause.
+   */
+  PLATFORM_REFUSAL(1),
+  /**
+   * The alarm's time had already passed while the device was off, so it was
+   * discarded at boot rather than sounded hours late.
+   */
+  STALE_AT_BOOT(2);
+
+  companion object {
+    fun ofRaw(raw: Int): AlarmEventCauseWire? {
+      return values().firstOrNull { it.raw == raw }
+    }
+  }
+}
+
 /** Generated class from Pigeon that represents data sent in messages. */
 data class AlarmSettingsWire (
   val id: Long,
@@ -117,8 +164,19 @@ data class AlarmSettingsWire (
   val warningNotificationOnKill: Boolean,
   val androidFullScreenIntent: Boolean,
   val allowAlarmOverlap: Boolean,
+  val allowSameSecondScheduling: Boolean,
   val iOSBackgroundAudio: Boolean,
-  val androidStopAlarmOnTermination: Boolean
+  val androidStopAlarmOnTermination: Boolean,
+  val preferConnectedAudioDevice: Boolean,
+  /**
+   * How long the snooze action defers the alarm, in milliseconds.
+   *
+   * Null, or anything below one minute, offers no snooze. The floor exists
+   * because Android scheduling falls back to a plain `Handler.postDelayed`
+   * below a few seconds, which survives neither process death nor
+   * cancellation. Android only.
+   */
+  val androidSnoozeDurationMillis: Long? = null
 )
  {
   companion object {
@@ -133,9 +191,12 @@ data class AlarmSettingsWire (
       val warningNotificationOnKill = pigeonVar_list[7] as Boolean
       val androidFullScreenIntent = pigeonVar_list[8] as Boolean
       val allowAlarmOverlap = pigeonVar_list[9] as Boolean
-      val iOSBackgroundAudio = pigeonVar_list[10] as Boolean
-      val androidStopAlarmOnTermination = pigeonVar_list[11] as Boolean
-      return AlarmSettingsWire(id, millisecondsSinceEpoch, assetAudioPath, volumeSettings, notificationSettings, loopAudio, vibrate, warningNotificationOnKill, androidFullScreenIntent, allowAlarmOverlap, iOSBackgroundAudio, androidStopAlarmOnTermination)
+      val allowSameSecondScheduling = pigeonVar_list[10] as Boolean
+      val iOSBackgroundAudio = pigeonVar_list[11] as Boolean
+      val androidStopAlarmOnTermination = pigeonVar_list[12] as Boolean
+      val preferConnectedAudioDevice = pigeonVar_list[13] as Boolean
+      val androidSnoozeDurationMillis = pigeonVar_list[14] as Long?
+      return AlarmSettingsWire(id, millisecondsSinceEpoch, assetAudioPath, volumeSettings, notificationSettings, loopAudio, vibrate, warningNotificationOnKill, androidFullScreenIntent, allowAlarmOverlap, allowSameSecondScheduling, iOSBackgroundAudio, androidStopAlarmOnTermination, preferConnectedAudioDevice, androidSnoozeDurationMillis)
     }
   }
   fun toList(): List<Any?> {
@@ -150,8 +211,11 @@ data class AlarmSettingsWire (
       warningNotificationOnKill,
       androidFullScreenIntent,
       allowAlarmOverlap,
+      allowSameSecondScheduling,
       iOSBackgroundAudio,
       androidStopAlarmOnTermination,
+      preferConnectedAudioDevice,
+      androidSnoozeDurationMillis,
     )
   }
   override fun equals(other: Any?): Boolean {
@@ -171,7 +235,8 @@ data class VolumeSettingsWire (
   val volume: Double? = null,
   val fadeDurationMillis: Long? = null,
   val fadeSteps: List<VolumeFadeStepWire>,
-  val volumeEnforced: Boolean
+  val volumeEnforced: Boolean,
+  val showSystemUI: Boolean
 )
  {
   companion object {
@@ -180,7 +245,8 @@ data class VolumeSettingsWire (
       val fadeDurationMillis = pigeonVar_list[1] as Long?
       val fadeSteps = pigeonVar_list[2] as List<VolumeFadeStepWire>
       val volumeEnforced = pigeonVar_list[3] as Boolean
-      return VolumeSettingsWire(volume, fadeDurationMillis, fadeSteps, volumeEnforced)
+      val showSystemUI = pigeonVar_list[4] as Boolean
+      return VolumeSettingsWire(volume, fadeDurationMillis, fadeSteps, volumeEnforced, showSystemUI)
     }
   }
   fun toList(): List<Any?> {
@@ -189,6 +255,7 @@ data class VolumeSettingsWire (
       fadeDurationMillis,
       fadeSteps,
       volumeEnforced,
+      showSystemUI,
     )
   }
   override fun equals(other: Any?): Boolean {
@@ -244,7 +311,17 @@ data class NotificationSettingsWire (
   val iconColorRed: Double? = null,
   val iconColorGreen: Double? = null,
   val iconColorBlue: Double? = null,
-  val keepNotificationAfterAlarmEnds: Boolean
+  val keepNotificationAfterAlarmEnds: Boolean,
+  /**
+   * Label for the snooze action. Null omits the action.
+   *
+   * Only shown when [AlarmSettingsWire.androidSnoozeDurationMillis] also
+   * gives it a usable duration; a label alone describes nothing the platform
+   * can perform. Android only.
+   */
+  val androidSnoozeButton: String? = null,
+  /** Whether swiping the notification away also stops the alarm. Android only. */
+  val androidStopAlarmOnDismiss: Boolean
 )
  {
   companion object {
@@ -258,7 +335,9 @@ data class NotificationSettingsWire (
       val iconColorGreen = pigeonVar_list[6] as Double?
       val iconColorBlue = pigeonVar_list[7] as Double?
       val keepNotificationAfterAlarmEnds = pigeonVar_list[8] as Boolean
-      return NotificationSettingsWire(title, body, stopButton, icon, iconColorAlpha, iconColorRed, iconColorGreen, iconColorBlue, keepNotificationAfterAlarmEnds)
+      val androidSnoozeButton = pigeonVar_list[9] as String?
+      val androidStopAlarmOnDismiss = pigeonVar_list[10] as Boolean
+      return NotificationSettingsWire(title, body, stopButton, icon, iconColorAlpha, iconColorRed, iconColorGreen, iconColorBlue, keepNotificationAfterAlarmEnds, androidSnoozeButton, androidStopAlarmOnDismiss)
     }
   }
   fun toList(): List<Any?> {
@@ -272,10 +351,61 @@ data class NotificationSettingsWire (
       iconColorGreen,
       iconColorBlue,
       keepNotificationAfterAlarmEnds,
+      androidSnoozeButton,
+      androidStopAlarmOnDismiss,
     )
   }
   override fun equals(other: Any?): Boolean {
     if (other !is NotificationSettingsWire) {
+      return false
+    }
+    if (this === other) {
+      return true
+    }
+    return FlutterBindingsPigeonUtils.deepEquals(toList(), other.toList())  }
+
+  override fun hashCode(): Int = toList().hashCode()
+}
+
+/**
+ * A change the host made to an alarm that Dart has not yet applied.
+ *
+ * Generated class from Pigeon that represents data sent in messages.
+ */
+data class AlarmEventWire (
+  val alarmId: Long,
+  val verb: AlarmEventVerbWire,
+  val cause: AlarmEventCauseWire,
+  /**
+   * For [AlarmEventVerbWire.moved], when the alarm now rings. For
+   * [AlarmEventVerbWire.dropped], when it should have rung.
+   */
+  val atMillis: Long,
+  /** When the host recorded this, used to acknowledge exactly this event. */
+  val recordedAtMillis: Long
+)
+ {
+  companion object {
+    fun fromList(pigeonVar_list: List<Any?>): AlarmEventWire {
+      val alarmId = pigeonVar_list[0] as Long
+      val verb = pigeonVar_list[1] as AlarmEventVerbWire
+      val cause = pigeonVar_list[2] as AlarmEventCauseWire
+      val atMillis = pigeonVar_list[3] as Long
+      val recordedAtMillis = pigeonVar_list[4] as Long
+      return AlarmEventWire(alarmId, verb, cause, atMillis, recordedAtMillis)
+    }
+  }
+  fun toList(): List<Any?> {
+    return listOf(
+      alarmId,
+      verb,
+      cause,
+      atMillis,
+      recordedAtMillis,
+    )
+  }
+  override fun equals(other: Any?): Boolean {
+    if (other !is AlarmEventWire) {
       return false
     }
     if (this === other) {
@@ -294,23 +424,38 @@ private open class FlutterBindingsPigeonCodec : StandardMessageCodec() {
         }
       }
       130.toByte() -> {
-        return (readValue(buffer) as? List<Any?>)?.let {
-          AlarmSettingsWire.fromList(it)
+        return (readValue(buffer) as Long?)?.let {
+          AlarmEventVerbWire.ofRaw(it.toInt())
         }
       }
       131.toByte() -> {
-        return (readValue(buffer) as? List<Any?>)?.let {
-          VolumeSettingsWire.fromList(it)
+        return (readValue(buffer) as Long?)?.let {
+          AlarmEventCauseWire.ofRaw(it.toInt())
         }
       }
       132.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
-          VolumeFadeStepWire.fromList(it)
+          AlarmSettingsWire.fromList(it)
         }
       }
       133.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
+          VolumeSettingsWire.fromList(it)
+        }
+      }
+      134.toByte() -> {
+        return (readValue(buffer) as? List<Any?>)?.let {
+          VolumeFadeStepWire.fromList(it)
+        }
+      }
+      135.toByte() -> {
+        return (readValue(buffer) as? List<Any?>)?.let {
           NotificationSettingsWire.fromList(it)
+        }
+      }
+      136.toByte() -> {
+        return (readValue(buffer) as? List<Any?>)?.let {
+          AlarmEventWire.fromList(it)
         }
       }
       else -> super.readValueOfType(type, buffer)
@@ -322,20 +467,32 @@ private open class FlutterBindingsPigeonCodec : StandardMessageCodec() {
         stream.write(129)
         writeValue(stream, value.raw)
       }
-      is AlarmSettingsWire -> {
+      is AlarmEventVerbWire -> {
         stream.write(130)
-        writeValue(stream, value.toList())
+        writeValue(stream, value.raw)
       }
-      is VolumeSettingsWire -> {
+      is AlarmEventCauseWire -> {
         stream.write(131)
-        writeValue(stream, value.toList())
+        writeValue(stream, value.raw)
       }
-      is VolumeFadeStepWire -> {
+      is AlarmSettingsWire -> {
         stream.write(132)
         writeValue(stream, value.toList())
       }
-      is NotificationSettingsWire -> {
+      is VolumeSettingsWire -> {
         stream.write(133)
+        writeValue(stream, value.toList())
+      }
+      is VolumeFadeStepWire -> {
+        stream.write(134)
+        writeValue(stream, value.toList())
+      }
+      is NotificationSettingsWire -> {
+        stream.write(135)
+        writeValue(stream, value.toList())
+      }
+      is AlarmEventWire -> {
+        stream.write(136)
         writeValue(stream, value.toList())
       }
       else -> super.writeValue(stream, value)
@@ -352,6 +509,29 @@ interface AlarmApi {
   fun isRinging(alarmId: Long?): Boolean
   fun setWarningNotificationOnKill(title: String, body: String)
   fun disableWarningNotificationOnKill()
+  /**
+   * Lists changes the host has made to alarms that Dart has not yet applied.
+   *
+   * These decisions are normally taken with no engine running: the
+   * notification is native, a full screen intent starts the process without
+   * starting Flutter, and `BootReceiver` runs before any app code, so
+   * [AlarmTriggerApi.alarmEvent] reaches nobody. The host holds a marker until
+   * Dart has durably applied it.
+   *
+   * Reading is **not** destructive — a marker survives until
+   * [acknowledgeAlarmEvent] confirms Dart applied it. A read that is followed
+   * by a crash therefore loses nothing.
+   */
+  fun getPendingAlarmEvents(callback: (Result<List<AlarmEventWire>>) -> Unit)
+  /**
+   * Drops the marker for [alarmId], but only if it still records exactly
+   * [recordedAtMillis].
+   *
+   * Matching on the timestamp as well as the id means a late acknowledgement
+   * for an earlier event cannot discard a newer one recorded for the same
+   * alarm in the meantime.
+   */
+  fun acknowledgeAlarmEvent(alarmId: Long, recordedAtMillis: Long, callback: (Result<Unit>) -> Unit)
 
   companion object {
     /** The codec used by AlarmApi. */
@@ -469,6 +649,44 @@ interface AlarmApi {
           channel.setMessageHandler(null)
         }
       }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.alarm.AlarmApi.getPendingAlarmEvents$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { _, reply ->
+            api.getPendingAlarmEvents{ result: Result<List<AlarmEventWire>> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(FlutterBindingsPigeonUtils.wrapError(error))
+              } else {
+                val data = result.getOrNull()
+                reply.reply(FlutterBindingsPigeonUtils.wrapResult(data))
+              }
+            }
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.alarm.AlarmApi.acknowledgeAlarmEvent$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { message, reply ->
+            val args = message as List<Any?>
+            val alarmIdArg = args[0] as Long
+            val recordedAtMillisArg = args[1] as Long
+            api.acknowledgeAlarmEvent(alarmIdArg, recordedAtMillisArg) { result: Result<Unit> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(FlutterBindingsPigeonUtils.wrapError(error))
+              } else {
+                reply.reply(FlutterBindingsPigeonUtils.wrapResult(null))
+              }
+            }
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
     }
   }
 }
@@ -503,6 +721,34 @@ class AlarmTriggerApi(private val binaryMessenger: BinaryMessenger, private val 
     val channelName = "dev.flutter.pigeon.alarm.AlarmTriggerApi.alarmStopped$separatedMessageChannelSuffix"
     val channel = BasicMessageChannel<Any?>(binaryMessenger, channelName, codec)
     channel.send(listOf(alarmIdArg)) {
+      if (it is List<*>) {
+        if (it.size > 1) {
+          callback(Result.failure(FlutterError(it[0] as String, it[1] as String, it[2] as String?)))
+        } else {
+          callback(Result.success(Unit))
+        }
+      } else {
+        callback(Result.failure(FlutterBindingsPigeonUtils.createConnectionError(channelName)))
+      } 
+    }
+  }
+  /**
+   * The host moved or dropped an alarm on its own.
+   *
+   * Distinct from [alarmStopped], which means the user resolved the alarm. A
+   * deferral reported as a stop would tell the application it was dismissed;
+   * a discard reported as a stop would hide that the alarm never rang.
+   *
+   * Only reaches Dart when an engine happens to be attached. The durable
+   * record is the host's marker, drained by `AlarmApi.getPendingAlarmEvents`,
+   * so this call is an optimisation rather than the contract.
+   */
+  fun alarmEvent(eventArg: AlarmEventWire, callback: (Result<Unit>) -> Unit)
+{
+    val separatedMessageChannelSuffix = if (messageChannelSuffix.isNotEmpty()) ".$messageChannelSuffix" else ""
+    val channelName = "dev.flutter.pigeon.alarm.AlarmTriggerApi.alarmEvent$separatedMessageChannelSuffix"
+    val channel = BasicMessageChannel<Any?>(binaryMessenger, channelName, codec)
+    channel.send(listOf(eventArg)) {
       if (it is List<*>) {
         if (it.size > 1) {
           callback(Result.failure(FlutterError(it[0] as String, it[1] as String, it[2] as String?)))

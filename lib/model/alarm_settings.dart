@@ -22,9 +22,12 @@ class AlarmSettings extends Equatable {
     this.warningNotificationOnKill = true,
     this.androidFullScreenIntent = true,
     this.allowAlarmOverlap = false,
+    this.allowSameSecondScheduling = false,
     this.iOSBackgroundAudio = true,
     this.androidStopAlarmOnTermination = true,
+    this.preferConnectedAudioDevice = false,
     this.payload,
+    this.androidSnoozeDuration,
   });
 
   /// Constructs an `AlarmSettings` instance from the given JSON data.
@@ -40,21 +43,26 @@ class AlarmSettings extends Equatable {
 
       final volume = (json['volume'] as num?)?.toDouble();
       final fadeDurationSeconds = (json['fadeDuration'] as num?)?.toDouble();
-      final fadeDurationMillis =
+      // The generated VolumeSettings parser reads durations in microseconds.
+      final fadeDurationMicros =
           (fadeDurationSeconds != null && fadeDurationSeconds > 0)
-              ? (fadeDurationSeconds * 1000).toInt()
+              ? (fadeDurationSeconds * Duration.microsecondsPerSecond).toInt()
               : null;
       final volumeEnforced = json['volumeEnforced'] as bool? ?? false;
 
       json['volumeSettings'] = {
         'volume': volume,
-        'fadeDuration': fadeDurationMillis,
+        'fadeDuration': fadeDurationMicros,
         'fadeSteps': <Map<String, dynamic>>[],
         'volumeEnforced': volumeEnforced,
       };
 
       // Default `allowAlarmOverlap` to false for v4
       json['allowAlarmOverlap'] = json['allowAlarmOverlap'] ?? false;
+
+      // Default `allowSameSecondScheduling` to false for v4
+      json['allowSameSecondScheduling'] =
+          json['allowSameSecondScheduling'] ?? false;
 
       // Default `iOSBackgroundAudio` to true for v4
       json['iOSBackgroundAudio'] = json['iOSBackgroundAudio'] ?? true;
@@ -84,6 +92,14 @@ class AlarmSettings extends Equatable {
   }
 
   static final _log = Logger('AlarmSettings');
+
+  /// Shortest [androidSnoozeDuration] the platform will honour.
+  ///
+  /// Below this, Android scheduling stops using `AlarmManager` and falls back
+  /// to an in-process timer that survives neither process death nor
+  /// cancellation — so a shorter snooze could be neither guaranteed nor undone.
+  /// A shorter duration offers no snooze at all rather than an unreliable one.
+  static const minSnoozeDuration = Duration(minutes: 1);
 
   /// Unique identifier associated with the alarm. Cannot be 0 or -1.
   final int id;
@@ -159,6 +175,14 @@ class AlarmSettings extends Equatable {
   /// Defaults to `false`.
   final bool allowAlarmOverlap;
 
+  /// Whether multiple alarms with different ids can be scheduled for the same
+  /// second. When `false` (default), a new alarm scheduled for the same second
+  /// as an existing one will replace it. When `true`, alarms with different ids
+  /// can coexist even if they share the same second.
+  ///
+  /// Defaults to `false`.
+  final bool allowSameSecondScheduling;
+
   /// iOS apps are killed if they remain inactive in the background. Android
   /// does not have this limitation due to native AlarmManager support.
   ///
@@ -178,11 +202,35 @@ class AlarmSettings extends Equatable {
   /// Defaults to `true`. Has no effect on iOS.
   final bool androidStopAlarmOnTermination;
 
+  /// If true, alarm audio routes to a connected earphone or Bluetooth device
+  /// when one is present, falling back to the built-in speaker if not.
+  /// Uses `STREAM_MUSIC` and `USAGE_MEDIA` instead of `STREAM_ALARM` and
+  /// `USAGE_ALARM`, so the media volume slider controls the volume instead
+  /// of the alarm slider.
+  ///
+  /// If false (default), audio is always forced to the built-in speaker
+  /// via `USAGE_ALARM`, and the alarm volume slider applies.
+  ///
+  /// Has no effect on iOS. Defaults to `false`.
+  final bool preferConnectedAudioDevice;
+
   /// Optional payload to be sent with the alarm. This can be used to pass
   /// additional data to the alarm handler.
   ///
   /// Caller is responsible for serializing and parsing the payload.
   final String? payload;
+
+  /// How long the snooze action defers this alarm.
+  ///
+  /// **Android only.** When set, and when
+  /// [NotificationSettings.androidSnoozeButton] gives it a label, the alarm
+  /// notification offers a snooze that stops the current ring and re-registers
+  /// the alarm this far ahead.
+  ///
+  /// Null, or anything under a minute, offers no snooze. The minimum exists
+  /// because Android scheduling stops using `AlarmManager` for very short
+  /// delays, and the fallback survives neither process death nor cancellation.
+  final Duration? androidSnoozeDuration;
 
   /// Converts the `AlarmSettings` instance to a JSON object.
   Map<String, dynamic> toJson() => _$AlarmSettingsToJson(this);
@@ -199,8 +247,11 @@ class AlarmSettings extends Equatable {
         warningNotificationOnKill: warningNotificationOnKill,
         androidFullScreenIntent: androidFullScreenIntent,
         allowAlarmOverlap: allowAlarmOverlap,
+        allowSameSecondScheduling: allowSameSecondScheduling,
         iOSBackgroundAudio: iOSBackgroundAudio,
         androidStopAlarmOnTermination: androidStopAlarmOnTermination,
+        preferConnectedAudioDevice: preferConnectedAudioDevice,
+        androidSnoozeDurationMillis: androidSnoozeDuration?.inMilliseconds,
       );
 
   /// Creates a copy of `AlarmSettings` but with the given fields replaced with
@@ -213,19 +264,29 @@ class AlarmSettings extends Equatable {
     NotificationSettings? notificationSettings,
     bool? loopAudio,
     bool? vibrate,
+    @Deprecated('This parameter is ignored. Use volumeSettings instead.')
     double? volume,
+    @Deprecated('This parameter is ignored. Use volumeSettings instead.')
     bool? volumeEnforced,
+    @Deprecated('This parameter is ignored. Use volumeSettings instead.')
     double? fadeDuration,
+    @Deprecated('This parameter is ignored. Use volumeSettings instead.')
     List<double>? fadeStopTimes,
+    @Deprecated('This parameter is ignored. Use volumeSettings instead.')
     List<double>? fadeStopVolumes,
+    @Deprecated('This parameter is ignored. Use notificationSettings instead.')
     String? notificationTitle,
+    @Deprecated('This parameter is ignored. Use notificationSettings instead.')
     String? notificationBody,
     bool? warningNotificationOnKill,
     bool? androidFullScreenIntent,
     bool? allowAlarmOverlap,
+    bool? allowSameSecondScheduling,
     bool? iOSBackgroundAudio,
     bool? androidStopAlarmOnTermination,
+    bool? preferConnectedAudioDevice,
     String? Function()? payload,
+    Duration? Function()? androidSnoozeDuration,
   }) {
     return AlarmSettings(
       id: id ?? this.id,
@@ -240,10 +301,21 @@ class AlarmSettings extends Equatable {
       androidFullScreenIntent:
           androidFullScreenIntent ?? this.androidFullScreenIntent,
       allowAlarmOverlap: allowAlarmOverlap ?? this.allowAlarmOverlap,
+      allowSameSecondScheduling:
+          allowSameSecondScheduling ?? this.allowSameSecondScheduling,
       iOSBackgroundAudio: iOSBackgroundAudio ?? this.iOSBackgroundAudio,
       androidStopAlarmOnTermination:
           androidStopAlarmOnTermination ?? this.androidStopAlarmOnTermination,
-      payload: payload?.call() ?? this.payload,
+      preferConnectedAudioDevice:
+          preferConnectedAudioDevice ?? this.preferConnectedAudioDevice,
+      // The function wrapper allows callers to clear the payload by
+      // explicitly returning null.
+      payload: payload != null ? payload() : this.payload,
+      // Wrapped like payload so a caller can remove an existing snooze by
+      // returning null, which a plain nullable parameter cannot express.
+      androidSnoozeDuration: androidSnoozeDuration != null
+          ? androidSnoozeDuration()
+          : this.androidSnoozeDuration,
     );
   }
 
@@ -259,8 +331,11 @@ class AlarmSettings extends Equatable {
         warningNotificationOnKill,
         androidFullScreenIntent,
         allowAlarmOverlap,
+        allowSameSecondScheduling,
         iOSBackgroundAudio,
         androidStopAlarmOnTermination,
+        preferConnectedAudioDevice,
         payload,
+        androidSnoozeDuration,
       ];
 }

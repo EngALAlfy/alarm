@@ -80,14 +80,16 @@ await Alarm.set(alarmSettings: alarmSettings)
 | --------------------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | id                                                  | `int`                  | Unique identifier of the alarm.                                                                                                                                                                      |
 | dateTime                                            | `DateTime`             | The date and time you want your alarm to ring.                                                                                                                                                       |
-| assetAudioPath                                      | `String?`              | The path to you audio asset you want to use as ringtone. Can be a path in your assets folder or a local file path with Android permission. If `null`, the device's default alarm sound will be used. |
+| assetAudioPath                                      | `String?`              | The path to your audio asset you want to use as ringtone. Can be a path in your assets folder or a local file path with Android permission. If `null`, the device's default alarm sound will be used. |
 | loopAudio                                           | `bool`                 | If true, audio will repeat indefinitely until alarm is stopped.                                                                                                                                      |
 | vibrate                                             | `bool`                 | If true, device will vibrate indefinitely until alarm is stopped. If [loopAudio] is set to false, vibrations will stop when audio ends.                                                              |
-| warningNotificationOnKill                           | `bool`                 | Whether to show a notification when application is killed to warn the user that the alarm he set may not ring. Recommanded for iOS. Enabled by default.                                              |
+| warningNotificationOnKill                           | `bool`                 | Whether to show a notification when application is killed to warn the user that the alarm he set may not ring. Recommended for iOS. Enabled by default.                                              |
 | androidFullScreenIntent                             | `bool`                 | Whether to turn screen on when android alarm notification is triggered. Enabled by default.                                                                                                          |
 | allowAlarmOverlap                                   | `bool`                 | Whether the alarm should ring if another alarm is already ringing. Disabled by default.                                                                                                              |
 | androidStopAlarmOnTermination                       | `bool`                 | Whether to stop the alarm when an Android task is terminated. Enabled by default.                                                                                                                    |
+| preferConnectedAudioDevice                          | `bool`                 | If true, routes alarm audio to a connected earphone or Bluetooth device when present, falling back to the built-in speaker if not. Uses the media volume slider instead of the alarm slider. Has no effect on iOS. Disabled by default. |
 | payload                                             | `String?`              | Optional data sent with the alarm. Caller handles serialization and parsing.                                                                                                                         |
+| androidSnoozeDuration                               | `Duration?`            | How long the snooze action defers the alarm. Android only. With a `NotificationSettings.androidSnoozeButton` label, the notification offers a snooze that stops the ring and re-registers the alarm this far ahead. Minimum one minute. No snooze if null. |
 | [notificationSettings](#notificationsettings-model) | `NotificationSettings` | Settings for notification title, body, icon, icon color and action buttons (only stop at the moment).                                                                                                |
 | [volumeSettings](#volumesettings-model)             | `VolumeSettings`       | Settings for alarm volume and fade durations.                                                                                                                                                        |
 
@@ -99,6 +101,8 @@ await Alarm.setWarningNotificationOnKill(title, body)
 
 The property `androidStopAlarmOnTermination` works only on Android as on iOS the alarm is naturally stopped by the system when the app is terminated (as the native code can no longer run).
 
+Since Android 13, a foreground service notification can be swiped away while the device is unlocked, so the alarm notification is dismissible even though it is marked ongoing. By default that swipe stops the alarm, exactly like the stop button. Set `NotificationSettings.androidStopAlarmOnDismiss` to `false` if a stray swipe must not be able to silence an alarm: the swipe then re-posts the notification for as long as the alarm is still ringing, so the user keeps the controls they need to act on it. Give the notification a `stopButton` so there is something to act with, or present the alarm on [your own screen](#presenting-the-alarm-on-your-own-screen).
+
 ### NotificationSettings model
 
 | Property                       | Type      | Description                                                                        |
@@ -106,9 +110,11 @@ The property `androidStopAlarmOnTermination` works only on Android as on iOS the
 | title                          | `String`  | Title of the alarm notification.                                                   |
 | body                           | `String`  | Body of the alarm notification.                                                    |
 | stopButton                     | `String?` | Text shown in the stop button of the alarm notification. Button not shown if null. |
+| androidSnoozeButton            | `String?` | Text shown in the snooze button of the alarm notification. Android only. Shown only when `AlarmSettings.androidSnoozeDuration` also gives it a usable duration. |
 | icon                           | `String?` | Icon to display on the notification. Only customizable on Android.                 |
 | iconColor                      | `Color?`  | Color of the notification icon. Only customizable on Android.                      |
 | keepNotificationAfterAlarmEnds | `bool`    | Keeps the notification visible after the alarm sound ends. iOS only.               |
+| androidStopAlarmOnDismiss      | `bool`    | Whether swiping the notification away also stops the alarm. Android only. Enabled by default. |
 
 
 ### VolumeSettings model
@@ -137,6 +143,25 @@ You can also listen to the `Alarm.updateStream` to know when an alarm is added, 
 
 To avoid unexpected behaviors, if you set an alarm for the same time, down to the second, as an existing one, the new alarm will replace the existing one.
 
+If you need to schedule multiple alarms with different ids for the exact same second, you can set `allowSameSecondScheduling` to `true`:
+
+```dart
+AlarmSettings(
+  id: 1,
+  dateTime: dateTime,
+  allowSameSecondScheduling: true,
+  // ...
+)
+```
+
+When `allowSameSecondScheduling` is enabled:
+- Alarms with the **same id** still replace each other
+- Alarms with **different ids** can be scheduled for the same second
+- How they ring depends on `allowAlarmOverlap`:
+  - `allowAlarmOverlap = false` (default): Alarms ring **sequentially** one after another — just like the iOS system Clock app. The first alarm rings first; when it stops, the next queued alarm starts ringing automatically.
+  - `allowAlarmOverlap = true`: Alarms ring **concurrently** — the later alarm will override the previous one and continue ringing.
+- These two options are independent and can be combined as needed
+
 ## 📱 Example app
 
 Don't hesitate to check out the [example's code](https://github.com/gdelataillade/alarm/tree/main/example), and take a look at the app:
@@ -162,7 +187,7 @@ Silenced: Means that the notification is not shown directly on the top of the sc
 
 ## 📋 Logging
 
-This plugin uses the [logging package](https://pub.dev/packages/logging) to log information. If you aren't already, (optional) you'll need to install and configre the logging package to see these logs.
+This plugin uses the [logging package](https://pub.dev/packages/logging) to log information. If you aren't already, (optional) you'll need to install and configure the logging package to see these logs.
 
 An example can be found in `example/lib/utils/logging.dart`. This file defines a `setupLogging` method which is called from `main.dart`.
 
@@ -233,6 +258,150 @@ Check out this interactive walkthrough of the `alarm` codebase on CodeCanvas [he
 
 ### Android
 Leverages a foreground service with AlarmManager scheduling to ensure alarm reliability, even if the app is terminated. Utilizes AudioManager for robust alarm sound management.
+
+#### Presenting the alarm on your own screen
+
+By default the full screen intent opens your launcher activity, so your whole
+app becomes what the lock screen shows.
+
+If you'd rather present the alarm on a dedicated screen, declare an activity
+that handles `com.gdelataillade.alarm.action.RING` and the plugin will open it
+instead:
+
+```xml
+<activity
+    android:name=".AlarmActivity"
+    android:exported="false"
+    android:launchMode="singleInstance"
+    android:taskAffinity="your.package.alarm"
+    android:excludeFromRecents="true"
+    android:showWhenLocked="true"
+    android:turnScreenOn="true">
+    <intent-filter>
+        <action android:name="com.gdelataillade.alarm.action.RING"/>
+        <category android:name="android.intent.category.DEFAULT"/>
+    </intent-filter>
+</activity>
+```
+
+A separate `taskAffinity` puts it in a task of its own, so finishing it returns
+the user to whatever the alarm interrupted instead of into your app.
+
+The launching intent carries what the screen needs to render without a Flutter
+engine, which is the normal case since a full screen intent starts the process
+without starting Flutter:
+
+| Extra | Value |
+| --- | --- |
+| `alarmId` | The alarm's id, to act on it |
+| `alarmTitle`, `alarmBody` | From `NotificationSettings` |
+| `alarmStopLabel` | `NotificationSettings.stopButton` |
+| `alarmSnoozeLabel` | `NotificationSettings.androidSnoozeButton`, or null when this alarm cannot be snoozed |
+
+Resolve the alarm by broadcasting to `AlarmReceiver`. The receiver declares no
+intent filter, so the broadcast has to name it explicitly:
+
+```kotlin
+// Dismiss the alarm.
+context.sendBroadcast(
+    Intent(context, AlarmReceiver::class.java).apply {
+        action = "com.gdelataillade.alarm.ACTION_STOP"
+        putExtra("id", alarmId)
+    }
+)
+
+// Or defer it, if alarmSnoozeLabel was non-null.
+context.sendBroadcast(
+    Intent(context, AlarmReceiver::class.java).apply {
+        action = "com.gdelataillade.alarm.ACTION_SNOOZE"
+        putExtra("id", alarmId)
+    }
+)
+```
+
+Only offer snooze when `alarmSnoozeLabel` is non-null — it is gated on exactly
+the same condition as the notification's own snooze action, so a null label
+means the alarm has no usable snooze duration and the broadcast would be
+ignored.
+
+Your activity also becomes what tapping the notification opens, not only what
+the full screen intent opens — once declared, it is the alarm surface for both.
+
+Nothing tells your activity that the alarm ended for another reason: the audio
+finished, `Alarm.stop()` was called from Dart, or a queued alarm was promoted.
+Observe `AlarmRingingLiveData.instance` and finish when it turns false — it goes
+false once no alarm is ringing at all.
+
+Declaring no such activity keeps the previous behaviour. The activity does not
+have to be a dedicated one either — declaring the `RING` filter on your existing
+`MainActivity` lets you tell an alarm launch from the user opening the app, with
+your normal UI still presenting the alarm. See
+[Telling an alarm launch from a manual one](https://github.com/gdelataillade/alarm/blob/main/help/DETECT-ALARM-LAUNCH-ANDROID.md).
+
+#### Snooze
+
+Give an alarm an `androidSnoozeDuration` and its notification an
+`androidSnoozeButton` label, and the notification offers a snooze that stops
+the current ring and re-registers the alarm that far ahead:
+
+```Dart
+AlarmSettings(
+  // ...
+  androidSnoozeDuration: const Duration(minutes: 9),
+  notificationSettings: const NotificationSettings(
+    title: 'Wake up',
+    body: '',
+    stopButton: 'Stop',
+    androidSnoozeButton: 'Snooze',
+  ),
+);
+```
+
+Both are required. A label with no duration describes an action the platform
+cannot perform, and a duration with no label gives the user no way to invoke
+it; either on its own logs a warning and offers no snooze.
+
+The duration must be at least `AlarmSettings.minSnoozeDuration` (one minute).
+Below that, Android stops scheduling through `AlarmManager` and falls back to
+an in-process timer that survives neither app termination nor cancellation, so
+a shorter snooze could be neither guaranteed nor undone.
+
+A snooze is reported as `Alarm.snoozed`, never as a stop, because the alarm is
+still owed:
+
+```Dart
+Alarm.snoozed.listen((snooze) {
+  print('Alarm ${snooze.id} rings again at ${snooze.nextRingAt}');
+});
+```
+
+The alarm also leaves `Alarm.ringing` and reappears in `Alarm.scheduled` with
+its new `dateTime`, so an app that tracks alarm state through those streams
+needs no special handling.
+
+The button is normally pressed with **no Flutter engine running**, since the
+notification is native and the process may not be up. The deferral is recorded
+natively and applied on the next `Alarm.init()`, before any reconciliation, so
+your app never sees an alarm whose time moved with nothing explaining why. The
+record is kept until Dart confirms it stored the new time, so a crash in
+between loses nothing, and applying the same deferral twice does nothing the
+second time.
+
+`Alarm.snoozed` is buffered, so subscribing after `Alarm.init()` — the order the
+setup above recommends — still delivers a deferral replayed during it. A
+listener that subscribes later receives it too, so key any irreversible reaction
+on the alarm id and the deferral time rather than assuming one delivery.
+
+Snoozing an alarm that is not currently scheduled, or whose snooze time has
+already passed, is refused rather than applied — a deferral is never allowed to
+rewrite an alarm into the past, where the next reconciliation pass would delete
+it.
+
+One caveat, inherited from how overlapping alarms work generally: if a snoozed
+alarm comes back round while a different alarm is ringing and
+`allowAlarmOverlap` is false, it is discarded rather than queued. Set
+`allowAlarmOverlap` or `allowSameSecondScheduling` if your app can have several
+alarms due close together.
 
 ### iOS
 Keeps the app awake using a silent `AVAudioPlayer` until alarm rings. When in the background, it also uses `Background App Refresh` to periodically ensure the app is still active.

@@ -148,6 +148,35 @@ enum AlarmErrorCode: Int {
   case missingNotificationPermission = 4
 }
 
+/// What the host did to an alarm without the application asking.
+///
+/// Dart's handling depends only on this: [moved] rewrites the stored time,
+/// [dropped] removes the alarm. The [AlarmEventCauseWire] is for the app.
+enum AlarmEventVerbWire: Int {
+  /// The alarm is still owed and is now registered for a different time.
+  case moved = 0
+  /// The alarm is gone and will not ring.
+  case dropped = 1
+}
+
+/// Why the host changed an alarm.
+enum AlarmEventCauseWire: Int {
+  /// The user deferred the alarm from the notification or the ring screen.
+  case snooze = 0
+  /// The platform refused to let the ring start.
+  ///
+  /// Android forbids starting a `mediaPlayback` foreground service from
+  /// `BOOT_COMPLETED`, and the refusal follows the attribution rather than the
+  /// caller, so an ordinary alarm delivered inside the boot window is refused
+  /// too. The alarm is normally re-armed just past that window, because ringing
+  /// late beats not ringing; it is only dropped when the retry is refused as
+  /// well, which means the boot window was not the cause.
+  case platformRefusal = 1
+  /// The alarm's time had already passed while the device was off, so it was
+  /// discarded at boot rather than sounded hours late.
+  case staleAtBoot = 2
+}
+
 /// Generated class from Pigeon that represents data sent in messages.
 struct AlarmSettingsWire: Hashable {
   var id: Int64
@@ -160,8 +189,17 @@ struct AlarmSettingsWire: Hashable {
   var warningNotificationOnKill: Bool
   var androidFullScreenIntent: Bool
   var allowAlarmOverlap: Bool
+  var allowSameSecondScheduling: Bool
   var iOSBackgroundAudio: Bool
   var androidStopAlarmOnTermination: Bool
+  var preferConnectedAudioDevice: Bool
+  /// How long the snooze action defers the alarm, in milliseconds.
+  ///
+  /// Null, or anything below one minute, offers no snooze. The floor exists
+  /// because Android scheduling falls back to a plain `Handler.postDelayed`
+  /// below a few seconds, which survives neither process death nor
+  /// cancellation. Android only.
+  var androidSnoozeDurationMillis: Int64? = nil
 
 
   // swift-format-ignore: AlwaysUseLowerCamelCase
@@ -176,8 +214,11 @@ struct AlarmSettingsWire: Hashable {
     let warningNotificationOnKill = pigeonVar_list[7] as! Bool
     let androidFullScreenIntent = pigeonVar_list[8] as! Bool
     let allowAlarmOverlap = pigeonVar_list[9] as! Bool
-    let iOSBackgroundAudio = pigeonVar_list[10] as! Bool
-    let androidStopAlarmOnTermination = pigeonVar_list[11] as! Bool
+    let allowSameSecondScheduling = pigeonVar_list[10] as! Bool
+    let iOSBackgroundAudio = pigeonVar_list[11] as! Bool
+    let androidStopAlarmOnTermination = pigeonVar_list[12] as! Bool
+    let preferConnectedAudioDevice = pigeonVar_list[13] as! Bool
+    let androidSnoozeDurationMillis: Int64? = nilOrValue(pigeonVar_list[14])
 
     return AlarmSettingsWire(
       id: id,
@@ -190,8 +231,11 @@ struct AlarmSettingsWire: Hashable {
       warningNotificationOnKill: warningNotificationOnKill,
       androidFullScreenIntent: androidFullScreenIntent,
       allowAlarmOverlap: allowAlarmOverlap,
+      allowSameSecondScheduling: allowSameSecondScheduling,
       iOSBackgroundAudio: iOSBackgroundAudio,
-      androidStopAlarmOnTermination: androidStopAlarmOnTermination
+      androidStopAlarmOnTermination: androidStopAlarmOnTermination,
+      preferConnectedAudioDevice: preferConnectedAudioDevice,
+      androidSnoozeDurationMillis: androidSnoozeDurationMillis
     )
   }
   func toList() -> [Any?] {
@@ -206,8 +250,11 @@ struct AlarmSettingsWire: Hashable {
       warningNotificationOnKill,
       androidFullScreenIntent,
       allowAlarmOverlap,
+      allowSameSecondScheduling,
       iOSBackgroundAudio,
       androidStopAlarmOnTermination,
+      preferConnectedAudioDevice,
+      androidSnoozeDurationMillis,
     ]
   }
   static func == (lhs: AlarmSettingsWire, rhs: AlarmSettingsWire) -> Bool {
@@ -223,6 +270,7 @@ struct VolumeSettingsWire: Hashable {
   var fadeDurationMillis: Int64? = nil
   var fadeSteps: [VolumeFadeStepWire]
   var volumeEnforced: Bool
+  var showSystemUI: Bool
 
 
   // swift-format-ignore: AlwaysUseLowerCamelCase
@@ -231,12 +279,14 @@ struct VolumeSettingsWire: Hashable {
     let fadeDurationMillis: Int64? = nilOrValue(pigeonVar_list[1])
     let fadeSteps = pigeonVar_list[2] as! [VolumeFadeStepWire]
     let volumeEnforced = pigeonVar_list[3] as! Bool
+    let showSystemUI = pigeonVar_list[4] as! Bool
 
     return VolumeSettingsWire(
       volume: volume,
       fadeDurationMillis: fadeDurationMillis,
       fadeSteps: fadeSteps,
-      volumeEnforced: volumeEnforced
+      volumeEnforced: volumeEnforced,
+      showSystemUI: showSystemUI
     )
   }
   func toList() -> [Any?] {
@@ -245,6 +295,7 @@ struct VolumeSettingsWire: Hashable {
       fadeDurationMillis,
       fadeSteps,
       volumeEnforced,
+      showSystemUI,
     ]
   }
   static func == (lhs: VolumeSettingsWire, rhs: VolumeSettingsWire) -> Bool {
@@ -294,6 +345,14 @@ struct NotificationSettingsWire: Hashable {
   var iconColorGreen: Double? = nil
   var iconColorBlue: Double? = nil
   var keepNotificationAfterAlarmEnds: Bool
+  /// Label for the snooze action. Null omits the action.
+  ///
+  /// Only shown when [AlarmSettingsWire.androidSnoozeDurationMillis] also
+  /// gives it a usable duration; a label alone describes nothing the platform
+  /// can perform. Android only.
+  var androidSnoozeButton: String? = nil
+  /// Whether swiping the notification away also stops the alarm. Android only.
+  var androidStopAlarmOnDismiss: Bool
 
 
   // swift-format-ignore: AlwaysUseLowerCamelCase
@@ -307,6 +366,8 @@ struct NotificationSettingsWire: Hashable {
     let iconColorGreen: Double? = nilOrValue(pigeonVar_list[6])
     let iconColorBlue: Double? = nilOrValue(pigeonVar_list[7])
     let keepNotificationAfterAlarmEnds = pigeonVar_list[8] as! Bool
+    let androidSnoozeButton: String? = nilOrValue(pigeonVar_list[9])
+    let androidStopAlarmOnDismiss = pigeonVar_list[10] as! Bool
 
     return NotificationSettingsWire(
       title: title,
@@ -317,7 +378,9 @@ struct NotificationSettingsWire: Hashable {
       iconColorRed: iconColorRed,
       iconColorGreen: iconColorGreen,
       iconColorBlue: iconColorBlue,
-      keepNotificationAfterAlarmEnds: keepNotificationAfterAlarmEnds
+      keepNotificationAfterAlarmEnds: keepNotificationAfterAlarmEnds,
+      androidSnoozeButton: androidSnoozeButton,
+      androidStopAlarmOnDismiss: androidStopAlarmOnDismiss
     )
   }
   func toList() -> [Any?] {
@@ -331,9 +394,57 @@ struct NotificationSettingsWire: Hashable {
       iconColorGreen,
       iconColorBlue,
       keepNotificationAfterAlarmEnds,
+      androidSnoozeButton,
+      androidStopAlarmOnDismiss,
     ]
   }
   static func == (lhs: NotificationSettingsWire, rhs: NotificationSettingsWire) -> Bool {
+    return deepEqualsFlutterBindings(lhs.toList(), rhs.toList())  }
+  func hash(into hasher: inout Hasher) {
+    deepHashFlutterBindings(value: toList(), hasher: &hasher)
+  }
+}
+
+/// A change the host made to an alarm that Dart has not yet applied.
+///
+/// Generated class from Pigeon that represents data sent in messages.
+struct AlarmEventWire: Hashable {
+  var alarmId: Int64
+  var verb: AlarmEventVerbWire
+  var cause: AlarmEventCauseWire
+  /// For [AlarmEventVerbWire.moved], when the alarm now rings. For
+  /// [AlarmEventVerbWire.dropped], when it should have rung.
+  var atMillis: Int64
+  /// When the host recorded this, used to acknowledge exactly this event.
+  var recordedAtMillis: Int64
+
+
+  // swift-format-ignore: AlwaysUseLowerCamelCase
+  static func fromList(_ pigeonVar_list: [Any?]) -> AlarmEventWire? {
+    let alarmId = pigeonVar_list[0] as! Int64
+    let verb = pigeonVar_list[1] as! AlarmEventVerbWire
+    let cause = pigeonVar_list[2] as! AlarmEventCauseWire
+    let atMillis = pigeonVar_list[3] as! Int64
+    let recordedAtMillis = pigeonVar_list[4] as! Int64
+
+    return AlarmEventWire(
+      alarmId: alarmId,
+      verb: verb,
+      cause: cause,
+      atMillis: atMillis,
+      recordedAtMillis: recordedAtMillis
+    )
+  }
+  func toList() -> [Any?] {
+    return [
+      alarmId,
+      verb,
+      cause,
+      atMillis,
+      recordedAtMillis,
+    ]
+  }
+  static func == (lhs: AlarmEventWire, rhs: AlarmEventWire) -> Bool {
     return deepEqualsFlutterBindings(lhs.toList(), rhs.toList())  }
   func hash(into hasher: inout Hasher) {
     deepHashFlutterBindings(value: toList(), hasher: &hasher)
@@ -350,13 +461,27 @@ private class FlutterBindingsPigeonCodecReader: FlutterStandardReader {
       }
       return nil
     case 130:
-      return AlarmSettingsWire.fromList(self.readValue() as! [Any?])
+      let enumResultAsInt: Int? = nilOrValue(self.readValue() as! Int?)
+      if let enumResultAsInt = enumResultAsInt {
+        return AlarmEventVerbWire(rawValue: enumResultAsInt)
+      }
+      return nil
     case 131:
-      return VolumeSettingsWire.fromList(self.readValue() as! [Any?])
+      let enumResultAsInt: Int? = nilOrValue(self.readValue() as! Int?)
+      if let enumResultAsInt = enumResultAsInt {
+        return AlarmEventCauseWire(rawValue: enumResultAsInt)
+      }
+      return nil
     case 132:
-      return VolumeFadeStepWire.fromList(self.readValue() as! [Any?])
+      return AlarmSettingsWire.fromList(self.readValue() as! [Any?])
     case 133:
+      return VolumeSettingsWire.fromList(self.readValue() as! [Any?])
+    case 134:
+      return VolumeFadeStepWire.fromList(self.readValue() as! [Any?])
+    case 135:
       return NotificationSettingsWire.fromList(self.readValue() as! [Any?])
+    case 136:
+      return AlarmEventWire.fromList(self.readValue() as! [Any?])
     default:
       return super.readValue(ofType: type)
     }
@@ -368,17 +493,26 @@ private class FlutterBindingsPigeonCodecWriter: FlutterStandardWriter {
     if let value = value as? AlarmErrorCode {
       super.writeByte(129)
       super.writeValue(value.rawValue)
-    } else if let value = value as? AlarmSettingsWire {
+    } else if let value = value as? AlarmEventVerbWire {
       super.writeByte(130)
-      super.writeValue(value.toList())
-    } else if let value = value as? VolumeSettingsWire {
+      super.writeValue(value.rawValue)
+    } else if let value = value as? AlarmEventCauseWire {
       super.writeByte(131)
-      super.writeValue(value.toList())
-    } else if let value = value as? VolumeFadeStepWire {
+      super.writeValue(value.rawValue)
+    } else if let value = value as? AlarmSettingsWire {
       super.writeByte(132)
       super.writeValue(value.toList())
-    } else if let value = value as? NotificationSettingsWire {
+    } else if let value = value as? VolumeSettingsWire {
       super.writeByte(133)
+      super.writeValue(value.toList())
+    } else if let value = value as? VolumeFadeStepWire {
+      super.writeByte(134)
+      super.writeValue(value.toList())
+    } else if let value = value as? NotificationSettingsWire {
+      super.writeByte(135)
+      super.writeValue(value.toList())
+    } else if let value = value as? AlarmEventWire {
+      super.writeByte(136)
       super.writeValue(value.toList())
     } else {
       super.writeValue(value)
@@ -409,6 +543,25 @@ protocol AlarmApi {
   func isRinging(alarmId: Int64?) throws -> Bool
   func setWarningNotificationOnKill(title: String, body: String) throws
   func disableWarningNotificationOnKill() throws
+  /// Lists changes the host has made to alarms that Dart has not yet applied.
+  ///
+  /// These decisions are normally taken with no engine running: the
+  /// notification is native, a full screen intent starts the process without
+  /// starting Flutter, and `BootReceiver` runs before any app code, so
+  /// [AlarmTriggerApi.alarmEvent] reaches nobody. The host holds a marker until
+  /// Dart has durably applied it.
+  ///
+  /// Reading is **not** destructive — a marker survives until
+  /// [acknowledgeAlarmEvent] confirms Dart applied it. A read that is followed
+  /// by a crash therefore loses nothing.
+  func getPendingAlarmEvents(completion: @escaping (Result<[AlarmEventWire], Error>) -> Void)
+  /// Drops the marker for [alarmId], but only if it still records exactly
+  /// [recordedAtMillis].
+  ///
+  /// Matching on the timestamp as well as the id means a late acknowledgement
+  /// for an earlier event cannot discard a newer one recorded for the same
+  /// alarm in the meantime.
+  func acknowledgeAlarmEvent(alarmId: Int64, recordedAtMillis: Int64, completion: @escaping (Result<Void, Error>) -> Void)
 }
 
 /// Generated setup class from Pigeon to handle messages through the `binaryMessenger`.
@@ -510,12 +663,72 @@ class AlarmApiSetup {
     } else {
       disableWarningNotificationOnKillChannel.setMessageHandler(nil)
     }
+    /// Lists changes the host has made to alarms that Dart has not yet applied.
+    ///
+    /// These decisions are normally taken with no engine running: the
+    /// notification is native, a full screen intent starts the process without
+    /// starting Flutter, and `BootReceiver` runs before any app code, so
+    /// [AlarmTriggerApi.alarmEvent] reaches nobody. The host holds a marker until
+    /// Dart has durably applied it.
+    ///
+    /// Reading is **not** destructive — a marker survives until
+    /// [acknowledgeAlarmEvent] confirms Dart applied it. A read that is followed
+    /// by a crash therefore loses nothing.
+    let getPendingAlarmEventsChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.alarm.AlarmApi.getPendingAlarmEvents\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
+    if let api = api {
+      getPendingAlarmEventsChannel.setMessageHandler { _, reply in
+        api.getPendingAlarmEvents { result in
+          switch result {
+          case .success(let res):
+            reply(wrapResult(res))
+          case .failure(let error):
+            reply(wrapError(error))
+          }
+        }
+      }
+    } else {
+      getPendingAlarmEventsChannel.setMessageHandler(nil)
+    }
+    /// Drops the marker for [alarmId], but only if it still records exactly
+    /// [recordedAtMillis].
+    ///
+    /// Matching on the timestamp as well as the id means a late acknowledgement
+    /// for an earlier event cannot discard a newer one recorded for the same
+    /// alarm in the meantime.
+    let acknowledgeAlarmEventChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.alarm.AlarmApi.acknowledgeAlarmEvent\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
+    if let api = api {
+      acknowledgeAlarmEventChannel.setMessageHandler { message, reply in
+        let args = message as! [Any?]
+        let alarmIdArg = args[0] as! Int64
+        let recordedAtMillisArg = args[1] as! Int64
+        api.acknowledgeAlarmEvent(alarmId: alarmIdArg, recordedAtMillis: recordedAtMillisArg) { result in
+          switch result {
+          case .success:
+            reply(wrapResult(nil))
+          case .failure(let error):
+            reply(wrapError(error))
+          }
+        }
+      }
+    } else {
+      acknowledgeAlarmEventChannel.setMessageHandler(nil)
+    }
   }
 }
 /// Generated protocol from Pigeon that represents Flutter messages that can be called from Swift.
 protocol AlarmTriggerApiProtocol {
   func alarmRang(alarmId alarmIdArg: Int64, completion: @escaping (Result<Void, PigeonError>) -> Void)
   func alarmStopped(alarmId alarmIdArg: Int64, completion: @escaping (Result<Void, PigeonError>) -> Void)
+  /// The host moved or dropped an alarm on its own.
+  ///
+  /// Distinct from [alarmStopped], which means the user resolved the alarm. A
+  /// deferral reported as a stop would tell the application it was dismissed;
+  /// a discard reported as a stop would hide that the alarm never rang.
+  ///
+  /// Only reaches Dart when an engine happens to be attached. The durable
+  /// record is the host's marker, drained by `AlarmApi.getPendingAlarmEvents`,
+  /// so this call is an optimisation rather than the contract.
+  func alarmEvent(event eventArg: AlarmEventWire, completion: @escaping (Result<Void, PigeonError>) -> Void)
 }
 class AlarmTriggerApi: AlarmTriggerApiProtocol {
   private let binaryMessenger: FlutterBinaryMessenger
@@ -549,6 +762,33 @@ class AlarmTriggerApi: AlarmTriggerApiProtocol {
     let channelName: String = "dev.flutter.pigeon.alarm.AlarmTriggerApi.alarmStopped\(messageChannelSuffix)"
     let channel = FlutterBasicMessageChannel(name: channelName, binaryMessenger: binaryMessenger, codec: codec)
     channel.sendMessage([alarmIdArg] as [Any?]) { response in
+      guard let listResponse = response as? [Any?] else {
+        completion(.failure(createConnectionError(withChannelName: channelName)))
+        return
+      }
+      if listResponse.count > 1 {
+        let code: String = listResponse[0] as! String
+        let message: String? = nilOrValue(listResponse[1])
+        let details: String? = nilOrValue(listResponse[2])
+        completion(.failure(PigeonError(code: code, message: message, details: details)))
+      } else {
+        completion(.success(()))
+      }
+    }
+  }
+  /// The host moved or dropped an alarm on its own.
+  ///
+  /// Distinct from [alarmStopped], which means the user resolved the alarm. A
+  /// deferral reported as a stop would tell the application it was dismissed;
+  /// a discard reported as a stop would hide that the alarm never rang.
+  ///
+  /// Only reaches Dart when an engine happens to be attached. The durable
+  /// record is the host's marker, drained by `AlarmApi.getPendingAlarmEvents`,
+  /// so this call is an optimisation rather than the contract.
+  func alarmEvent(event eventArg: AlarmEventWire, completion: @escaping (Result<Void, PigeonError>) -> Void) {
+    let channelName: String = "dev.flutter.pigeon.alarm.AlarmTriggerApi.alarmEvent\(messageChannelSuffix)"
+    let channel = FlutterBasicMessageChannel(name: channelName, binaryMessenger: binaryMessenger, codec: codec)
+    channel.sendMessage([eventArg] as [Any?]) { response in
       guard let listResponse = response as? [Any?] else {
         completion(.failure(createConnectionError(withChannelName: channelName)))
         return

@@ -16,9 +16,11 @@ class NotificationSettings extends Equatable {
     required this.title,
     required this.body,
     this.stopButton,
+    this.androidSnoozeButton,
     this.icon,
     this.iconColor,
     this.keepNotificationAfterAlarmEnds = false,
+    this.androidStopAlarmOnDismiss = true,
   });
 
   /// Converts the JSON object to a `NotificationSettings` instance.
@@ -36,6 +38,15 @@ class NotificationSettings extends Equatable {
   /// Won't work on iOS if app was killed.
   /// If null, button will not be shown. Null by default.
   final String? stopButton;
+
+  /// The text to display on the snooze button of the notification.
+  ///
+  /// **Android only.** Shown only when `AlarmSettings.androidSnoozeDuration`
+  /// also gives it a duration; a label alone describes nothing the platform
+  /// can perform.
+  ///
+  /// If null, button will not be shown. Null by default.
+  final String? androidSnoozeButton;
 
   /// The icon to display on the notification.
   ///
@@ -69,6 +80,7 @@ class NotificationSettings extends Equatable {
   ///
   /// If `null`, the icon will have a default color.
   /// Defaults to `null`.
+  @_ColorJsonConverter()
   final Color? iconColor;
 
   /// Keeps the notification banner visible even after the alarm sound ends.
@@ -84,6 +96,27 @@ class NotificationSettings extends Equatable {
   /// Defaults to `false`.
   final bool keepNotificationAfterAlarmEnds;
 
+  /// Whether swiping the notification away also stops the alarm.
+  ///
+  /// **Android only.** iOS has no equivalent dismissal action.
+  ///
+  /// Android 13 made foreground service notifications user-dismissible, so
+  /// `setOngoing(true)` no longer keeps the alarm notification pinned while the
+  /// device is unlocked: it can be swiped out of the shade like any other. When
+  /// this is `true` that swipe runs the same stop action as the notification's
+  /// stop button.
+  ///
+  /// Set it to `false` if a stray swipe must not be able to silence an alarm.
+  /// The swipe then puts the notification straight back, for as long as the
+  /// alarm is still ringing, so it cannot take away the controls the user needs
+  /// to act on it — give the notification a [stopButton] so there is something
+  /// to act with. This extends to an unlocked device what the platform already
+  /// guarantees on a locked one, where an ongoing notification cannot be
+  /// dismissed at all.
+  ///
+  /// Defaults to `true`, which is how the plugin has behaved since 5.0.3.
+  final bool androidStopAlarmOnDismiss;
+
   /// Converts the `NotificationSettings` instance to a JSON object.
   Map<String, dynamic> toJson() => _$NotificationSettingsToJson(this);
 
@@ -92,12 +125,14 @@ class NotificationSettings extends Equatable {
         title: title,
         body: body,
         stopButton: stopButton,
+        androidSnoozeButton: androidSnoozeButton,
         icon: icon,
         iconColorAlpha: iconColor?.a,
         iconColorRed: iconColor?.r,
         iconColorGreen: iconColor?.g,
         iconColorBlue: iconColor?.b,
         keepNotificationAfterAlarmEnds: keepNotificationAfterAlarmEnds,
+        androidStopAlarmOnDismiss: androidStopAlarmOnDismiss,
       );
 
   /// Creates a copy of this notification settings but with the given fields
@@ -106,21 +141,27 @@ class NotificationSettings extends Equatable {
     String? title,
     String? body,
     String? stopButton,
+    String? Function()? androidSnoozeButton,
     String? icon,
     Color? iconColor,
     bool? keepNotificationAfterAlarmEnds,
+    bool? androidStopAlarmOnDismiss,
   }) {
-    assert(title != null, 'NotificationSettings.title cannot be null');
-    assert(body != null, 'NotificationSettings.body cannot be null');
-
     return NotificationSettings(
       title: title ?? this.title,
       body: body ?? this.body,
       stopButton: stopButton ?? this.stopButton,
+      // Wrapped so a caller can remove the snooze action; the older nullable
+      // fields keep their existing signatures for compatibility.
+      androidSnoozeButton: androidSnoozeButton != null
+          ? androidSnoozeButton()
+          : this.androidSnoozeButton,
       icon: icon ?? this.icon,
       iconColor: iconColor ?? this.iconColor,
       keepNotificationAfterAlarmEnds:
           keepNotificationAfterAlarmEnds ?? this.keepNotificationAfterAlarmEnds,
+      androidStopAlarmOnDismiss:
+          androidStopAlarmOnDismiss ?? this.androidStopAlarmOnDismiss,
     );
   }
 
@@ -129,8 +170,26 @@ class NotificationSettings extends Equatable {
         title,
         body,
         stopButton,
+        androidSnoozeButton,
         icon,
         iconColor,
         keepNotificationAfterAlarmEnds,
+        androidStopAlarmOnDismiss,
       ];
+}
+
+/// Encodes a [Color] as its 32-bit ARGB integer.
+///
+/// `Color` has no JSON representation of its own, so without this the
+/// generator cannot build `fromJson` for [NotificationSettings.iconColor].
+/// The integer form matches what every previous plugin version wrote, so
+/// alarms persisted before this converter existed still parse.
+class _ColorJsonConverter implements JsonConverter<Color?, int?> {
+  const _ColorJsonConverter();
+
+  @override
+  Color? fromJson(int? json) => json == null ? null : Color(json);
+
+  @override
+  int? toJson(Color? object) => object?.toARGB32();
 }
