@@ -1,3 +1,8 @@
+## 5.11.0
+* **[Android] An alarm whose time passed while the device was off is now discarded instead of ringing at boot (#418).** Reported on `Alarm.events` as an `AlarmDropped` with cause `staleAtBoot`.
+* Added `AlarmSettings.androidStaleAfter`, the cutoff for that: 15 minutes by default, `null` never discards.
+* Added `Alarm.acknowledgeEvent()` and `Alarm.init(acknowledgeEventsAutomatically: false)`, so an app can keep a host event until it has durably recorded it (#429).
+
 ## 5.10.0
 * [Android] Fixed an alarm due within ~45s of a reboot never ringing (#424).
 * Added `Alarm.events`, reporting deferrals and discards the host made on its own.

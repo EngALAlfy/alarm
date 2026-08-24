@@ -17,6 +17,7 @@ This plugin offers a straightforward interface to set and cancel alarms on both 
   - [AlarmSettings model](#alarmsettings-model)
   - [NotificationSettings model](#notificationsettings-model)
   - [VolumeSettings model](#volumesettings-model)
+  - [Alarm events](#alarm-events)
 - [📱 Example app](#-example-app)
 - [⏰ Alarm behaviour](#-alarm-behaviour)
 - [📋 Logging](#-logging)
@@ -90,6 +91,7 @@ await Alarm.set(alarmSettings: alarmSettings)
 | preferConnectedAudioDevice                          | `bool`                 | If true, routes alarm audio to a connected earphone or Bluetooth device when present, falling back to the built-in speaker if not. Uses the media volume slider instead of the alarm slider. Has no effect on iOS. Disabled by default. |
 | payload                                             | `String?`              | Optional data sent with the alarm. Caller handles serialization and parsing.                                                                                                                         |
 | androidSnoozeDuration                               | `Duration?`            | How long the snooze action defers the alarm. Android only. With a `NotificationSettings.androidSnoozeButton` label, the notification offers a snooze that stops the ring and re-registers the alarm this far ahead. Minimum one minute. No snooze if null. |
+| androidStaleAfter                                   | `Duration?`            | How long past its due time an alarm found at boot is still worth ringing. Android only. A device that was off when the alarm was due rings it at boot; past this delay the alarm is discarded instead and reported on `Alarm.events` as an `AlarmDropped` with cause `staleAtBoot`. Defaults to 15 minutes. Pass `null` to never discard, which is the behaviour of 5.10.0 and earlier. Cannot be shorter than 30 seconds. |
 | [notificationSettings](#notificationsettings-model) | `NotificationSettings` | Settings for notification title, body, icon, icon color and action buttons (only stop at the moment).                                                                                                |
 | [volumeSettings](#volumesettings-model)             | `VolumeSettings`       | Settings for alarm volume and fade durations.                                                                                                                                                        |
 
@@ -161,6 +163,65 @@ When `allowSameSecondScheduling` is enabled:
   - `allowAlarmOverlap = false` (default): Alarms ring **sequentially** one after another — just like the iOS system Clock app. The first alarm rings first; when it stops, the next queued alarm starts ringing automatically.
   - `allowAlarmOverlap = true`: Alarms ring **concurrently** — the later alarm will override the previous one and continue ringing.
 - These two options are independent and can be combined as needed
+
+### Alarm events
+
+The host sometimes changes an alarm on its own, and usually while no Flutter engine is running — the
+user snoozes from the notification, Android refuses to let a ring start just after a reboot, or an
+alarm is found too stale to be worth ringing. Those decisions are recorded natively and reported on
+`Alarm.events`, drained on the next `Alarm.init()`, so an event can arrive long after it happened.
+
+```dart
+Alarm.events.listen((AlarmEvent event) {
+  switch (event) {
+    case AlarmMoved(:final id, :final nextRingAt):
+      // Still owed, and now ringing at nextRingAt.
+      myStore.recordDeferral(id, nextRingAt, event.cause);
+    case AlarmDropped(:final id, :final scheduledFor):
+      // Gone, and it will not ring — tell the user it was missed.
+      myStore.recordMissedAlarm(id, scheduledFor, event.cause);
+  }
+});
+```
+
+The verb is what your app has to handle; the `cause` is context for it.
+
+| Verb           | Cause              | What happened                                                          |
+| -------------- | ------------------ | ---------------------------------------------------------------------- |
+| `AlarmMoved`   | `snooze`           | The user deferred the alarm from the notification or your ring screen.  |
+| `AlarmMoved`   | `platformRefusal`  | Android refused the ring, so it was re-registered slightly later.      |
+| `AlarmDropped` | `staleAtBoot`      | The device was off past `androidStaleAfter`, so the alarm was discarded. |
+
+**The plugin shows the user nothing for these.** An `AlarmDropped` is worth surfacing, but only your
+app can do it in its own voice and its own records.
+
+Events are delivered **at least once, not exactly once** — a process death before the plugin
+confirms one replays it on the next `init()`, and re-subscribing replays the buffer. If you act
+irreversibly on an event, key that action on `(id, recordedAt)`, which identifies an event uniquely.
+
+#### Taking the durability boundary yourself
+
+By default the plugin confirms an event as soon as it is emitted, which is before your handler has
+finished writing it down — so a process death in that gap loses it. If that matters, take the
+boundary:
+
+```dart
+await Alarm.init(acknowledgeEventsAutomatically: false);
+
+Alarm.events.listen((event) async {
+  await myStore.recordMissedAlarm(event); // the work that must not be lost
+  await Alarm.acknowledgeEvent(event);    // only now is it safe to forget
+});
+```
+
+Two things to know before you do:
+
+- **An event you never acknowledge is redelivered on every `init()`** until the native marker
+  expires — 24 h for an `AlarmDropped`, a week for an `AlarmMoved`. Acknowledge every event you are
+  given, including ones you decide to ignore.
+- **The setting is per-isolate**, and `Alarm.snoozed` carries no handle to acknowledge with. Pass it
+  in every isolate that calls `init()`, and use `Alarm.events` rather than `Alarm.snoozed` if you
+  take the boundary.
 
 ## 📱 Example app
 
